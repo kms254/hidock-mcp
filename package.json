@@ -1,6 +1,6 @@
 {
   "name": "hidock-mcp",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "MCP server for HiDock USB audio recorder devices (H1, H1E, P1)",
   "type": "module",
   "repository": {
