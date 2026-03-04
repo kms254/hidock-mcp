@@ -313,9 +313,10 @@ const tools: HiDockTool[] = [
   rawCommandTool,
 ];
 
-const toolByName = Object.fromEntries(
-  tools.map((t) => [t.definition.name, t]),
-) as Record<string, HiDockTool>;
+const toolByName = Object.fromEntries(tools.map((t) => [t.definition.name, t])) as Record<
+  string,
+  HiDockTool
+>;
 
 export function getTool(name: string): HiDockTool | undefined {
   return toolByName[name];
