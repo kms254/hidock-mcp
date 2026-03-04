@@ -1,0 +1,51 @@
+{
+  "name": "hidock-mcp",
+  "version": "1.0.0",
+  "description": "MCP server for HiDock USB audio recorder devices (H1, H1E, P1)",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kms254/hidock-mcp.git"
+  },
+  "keywords": [
+    "mcp",
+    "hidock",
+    "usb",
+    "audio-recorder",
+    "typescript"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "main": "dist/index.js",
+  "bin": {
+    "hidock-mcp": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "test:watch": "vitest",
+    "lint": "eslint src/ test/",
+    "lint:fix": "eslint src/ test/ --fix",
+    "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\" \"*.json\" \"*.md\"",
+    "format:check": "prettier --check \"src/**/*.ts\" \"test/**/*.ts\" \"*.json\" \"*.md\""
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "usb": "^2.14.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^22.0.0",
+    "@vitest/coverage-v8": "^4.0.18",
+    "eslint": "^10.0.2",
+    "prettier": "^3.8.1",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "typescript-eslint": "^8.56.1",
+    "vitest": "^4.0.18"
+  }
+}

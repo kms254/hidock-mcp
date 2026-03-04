@@ -1,0 +1,1092 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Hidock</title>
+    <style type="text/css">
+        div { box-sizing: border-box; }
+        * { font-family: 'Mulish', 'Arial'; }
+        html, body { width: 100%; height: 100%; margin: 0px; padding: 0px; }
+        .page-container
+        {
+            margin: 0px auto;
+            width: 1400px;
+            height: 600px;
+            padding: 10px;
+            text-align: center;
+        }
+        .page-container div
+        {
+            width: 100%;
+            height: 100px;
+            line-height: 100px;
+        }
+        .page-container button
+        {
+            padding: 0px 20px;
+            height: 44px;
+            outline: none;
+            background-color: #0099ff;
+            color: #fff;
+            border: none;
+            border-radius: 5px;
+        }
+        .page-container button:hover
+        {
+            cursor: pointer;
+            background-color: #0066ff;
+        }
+        button
+        {
+            font-family: 'Mulish', 'Arial';
+            font-size: 18px;
+        }
+    </style>
+</head>
+<body>
+<div class="page-container">
+    <div>
+        <button id="connect">Connect</button>
+        <button id="deviceinfo">Device Info</button>
+        <button id="filelist">File List</button>
+        <button id="getfile">Get File</button>
+        <button id="filecount">File Count</button>
+        <button id="gettime">Get Time</button>
+        <button id="settime">Set Time</button>
+        <button id="cardinfo">Card Info</button>
+        <button id="optimize">Optimize</button>
+        <button id="uac-update">Update UAC</button>
+        <button id="massstorage">MassStorage</button>
+    </div>
+    <div>
+        <textarea style="width: 100%; height: 300px; font-size: 16px; line-height: 150%; font-family: Arial;" id="output" readonly></textarea>
+    </div>
+</div>
+<script type="text/javascript">
+    'use strict';
+    function q(selector) { return document.querySelector(selector); }
+
+    let jensen = null;
+    let files = null;
+    let fileBlocks = [];
+
+    function log(text)
+    {
+        var time = new Date().toLocaleString();
+        text = time + ':  ' + text + '\n';
+        q('#output').value = text + q('#output').value;
+    }
+
+    window.onload = function()
+    {
+        jensen = new Jensen();
+        let decoder = new MessageDecoder();
+        jensen.onconnect = function()
+        {
+            log('device connected');
+        }
+        jensen.onmessage = function(msg)
+        {
+            // ...
+        }
+        q('#massstorage').onclick = function()
+        {
+            jensen.massStorage(5);
+        }
+        q('#cardinfo').onclick = async function()
+        {
+            let rst = await jensen.getCardInfo(5);
+            if (rst == null) log('read cardinfo failed');
+            else log('Capacity: ' + rst.capacity + 'm, Used: ' + rst.used + 'm, Status: ' + rst.status);
+        }
+        q('#optimize').onclick = async function()
+        {
+            let rst = await jensen.formatCard(300);
+            if (rst == null || rst.result != 'success') log('optimize failed');
+            else log('done');
+        }
+        q('#connect').onclick = function()
+        {
+            jensen.connect();
+        }
+        q('#deviceinfo').onclick = async function()
+        {
+            let info = await jensen.getDeviceInfo(10);
+            log('Version: ' + info.versionCode + ', SN: ' + info.sn);
+            info = await jensen.getVersionInfo(10);
+            log('Version: ' + JSON.stringify(info));
+        }
+        q('#gettime').onclick = function()
+        {
+            jensen.getTime(5).then((info) => {
+                if (info == null) log('getTime timeout');
+                else log('Time: ' + info.time);
+            });
+        }
+        q('#settime').onclick = function()
+        {
+            jensen.setTime(new Date(), 5).then((info) => {
+                log(JSON.stringify(info));
+            });
+        }
+        const uac_firmwares = {
+            'hidock-h1' : { url : '/raw/jensen-1-uac.bin', md5 : '92e66fd8cfd36f09c83fc61491899307' },
+            'hidock-h1e' : { url : '/raw/jensen-3-uac.bin', md5 : 'c355c5bf8cc8a8da8bea6b6315ad7649' }
+        };
+        q('#uac-update').onclick = async function()
+        {
+            if (!confirm('Are you sure to update UAC firmware?')) return;
+            let uac = uac_firmwares[jensen.getModel()];
+            let resp = await jensen.requestUACUpdate(uac.md5, 1024);
+            log(JSON.stringify(resp));
+            if (resp.code != 0x00) return alert(resp.result);
+
+            // 下载文件并完成更新处理
+            let xhr = new XMLHttpRequest();
+            xhr.open('GET', uac.url);
+            xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+            xhr.responseType = 'arraybuffer';
+            xhr.onload = function(e)
+            {
+              log('get uac firmware: ' + this.statusText);
+              if (this.status != 200) return alert('Http Error: ' + this.status);
+              jensen.updateUAC(new Uint8Array(this.response), 30).then((info) => {
+                log(JSON.stringify(info));
+              });
+            }
+            xhr.send();
+        }
+        q('#filelist').onclick = function()
+        {
+            jensen.listFiles().then((fs) => {
+                let list = [];
+                for (let i = 0; i < fs.length; i++)
+                {
+                    list.push('\tName: ' + fs[i].name + ', Length: ' + fs[i].length);
+                }
+                log('Files: \n' + list.join('\n'));
+            });
+        }
+        q('#getfile').onclick = function()
+        {
+            let idx = prompt('Please enter the file index (starts with zero): ', '0');
+            // jensen.getFile();
+            if (files == null) return alert('please click `File List` first');
+            let file = files[parseInt(idx)];
+            jensen.getFile(file.name, file.length, (data) => {
+                console.error('Recv: ' + data.length);
+            });
+        }
+        q('#filecount').onclick = function()
+        {
+            jensen.getFileCount(5).then((info) => {
+                if (info == null) log('getFile timeout');
+                else log('Files: ' + info.count);
+            });
+        }
+    }
+
+    function toVersionNumber(vc)
+    {
+        let arr = vc.split(/\./gi);
+        let vn = 0;
+        for (let i = 0; i < arr.length; i++)
+        {
+            vn = vn | (parseInt(arr[arr.length - i - 1]) << (i * 8));
+        }
+        return vn;
+    }
+
+    const QUERY_DEVICE_INFO = 0x01;
+    const QUERY_DEVICE_TIME = 0x02;
+    const SET_DEVICE_TIME = 0x03;
+    const QUERY_FILE_LIST = 0x04;
+    const TRANSFER_FILE = 0x05;
+    const QUERY_FILE_COUNT = 0x06;
+    const DELETE_FILE = 0x07;
+    const REQUEST_FIRMWARE_UPGRADE = 0x08;
+    const FIRMWARE_UPLOAD = 0x09;
+    const DEVICE_MSG_TEST = 0x0a;
+    const GET_FILE_BLOCK = 0x0d;
+
+    const BNC_DEMO_TEST = 0x0A;
+    const REQUEST_UAC_UPDATE = 0x18;
+    const UAC_UPDATE = 0x19;
+
+    const GET_SETTINGS = 0x0B;
+    const SET_SETTINGS = 0x0C;
+
+    const READ_CARD_INFO = 0x10;
+    const FORMAT_CARD = 0x11;
+    const GET_RECORDING_FILE = 0x12;
+    const TEST_FIRMWARE_VERSION = 0xf001;
+
+    function Jensen()
+    {
+        this.device = null;
+        this.model = 'unknown';
+        this.buffer = [];
+        this.endpointIn = 2;
+        this.endpointOut = 1;
+        this.sequeue = 1;
+
+        this.messages = [];
+        this.currentMessage = -1;
+
+        // events
+        this.onconnect = null;
+        this.onmessage = null;
+
+        // 文件读取回调
+        this.fileLength = 0;                // 读取到这么大小的数量后结束当前事务，继续sendNext
+        this.fileReadBytes = 0;             // 已经读取到的文件大小
+        this.onFileRecvHandler = null;
+
+        // 文件列表回调
+        this.fileCount = 0;                 // 读取到这个数量的文件后结束当前事务，继续sendNext
+        this.onFileListHandler = null;
+        this.fileInfoList = [];
+
+        // 任务与Promise以及回应
+        let tasks = { };
+        let decoder = new MessageDecoder();
+
+        // 建立连接
+        this.connect = async function()
+        {
+            let self = this;
+            navigator.usb.requestDevice({ filters : [ { 'vendorId': 0x10D6 } ] })
+                .then(selectedDevice => {
+                self.device = selectedDevice;
+                return selectedDevice.open();
+            })
+            .then(() => {
+                self.setup();
+            })
+            .catch(e => console.error(e))
+            .finally(() =>
+            {
+                // ...
+            });
+        }
+
+        this.getModel = function()
+        {
+            return this.model;
+        }
+
+        this.reset = function()
+        {
+            this.messages = [];
+            this.fileInfoList = [];
+            this.fileCount = 0;
+            this.fileLength = 0;
+            this.fileReadBytes = 0;
+            this.currentMessage = -1;
+            this.buffer = [];
+            for (j in tasks) delete tasks[j];
+        }
+
+        this.setup = function()
+        {
+            if (this.device == null) throw new Error('device not connected');
+            let self = this;
+            log('connection setup');
+            self.device.selectConfiguration(1)
+                .then(() => {
+                self.device.claimInterface(0).then(() => {
+                    self.device.selectAlternateInterface(0, 0).then(() => {
+                        // self.device.transferIn(self.endpointIn, 1024).then((r) => { self.receive(r); });
+                        if (self.onconnect) try { self.onconnect(); } catch(e) { console.error(e); }
+                        // 清空上一次连接的所有消息，合适不合适？
+                        self.reset();
+                    });
+                })
+            });
+            if (this.device.productId == 0xb00c) this.model = 'hidock-h1';
+            if (this.device.productId == 0xb00d) this.model = 'hidock-h1e';
+            if (this.device.productId == 0xb00e) this.model = 'hidock-p1';
+            if (this.device.productId == 0xb00f) this.model = 'hidock-p1:mini';
+        }
+
+        this.tryconnect = function()
+        {
+            let self = this;
+            if (this.device) try { this.device.close(); } catch(e) {}
+            navigator.usb.getDevices().then((devices) => {
+                for (let i = 0; i < devices.length; i++)
+                {
+                    let item = devices[i];
+                    if (item.productName.indexOf('HiDock') > -1)
+                    {
+                        item.open().then(() => {
+                            self.device = item;
+                            self.setup();
+                        });
+                        break;
+                    }
+                }
+            });
+        }
+
+        this.init = function()
+        {
+            let self = this;
+            console.log('self init...');
+            navigator.usb.onconnect = function(e)
+            {
+                console.log(e);
+                if (e.device.productName.indexOf('HiDock') > -1)
+                {
+                    e.device.open().then(() => {
+                        self.device = e.device;
+                        self.setup();
+                    });
+                }
+            }
+            this.tryconnect();
+        }
+
+        this.init();
+
+        function trigger(action, vars)
+        {
+            if (action in tasks == false) return;
+            let p = tasks[action];
+            delete tasks[action];
+            if (p.timeout) clearTimeout(p.timeout);
+            p.resolve(vars);
+        }
+
+        function register(action, resolve, reject, timeout)
+        {
+            tasks[action] = { resolve : resolve, reject: reject, timeout: timeout };
+        }
+
+        this.receive = function(result)
+        {
+            log('Received: ' + result.data.byteLength);
+            let self = this;
+            for (let i = 0; i < result.data.byteLength; i++)
+            {
+                this.buffer.push(result.data.getInt8(i));
+            }
+            while (true)
+            {
+                let msg = this.decode();
+                console.log(msg);
+                if (msg == null) break;
+                if ((msg.id == TRANSFER_FILE || msg.id == GET_FILE_BLOCK) && this.onFileRecvHandler)
+                {
+                    try { this.onFileRecvHandler(msg.body); } catch(e) { }
+                    this.fileReadBytes += msg.body.length;
+                    if (this.fileReadBytes >= this.fileLength)
+                    {
+                        this.fileLength = 0;
+                        this.fileReadBytes = 0;
+                        this.currentMessage = -1;
+                        this.sendNext();
+                    }
+                }
+                else if (msg.id == QUERY_FILE_LIST)
+                {
+                    try { this.fileInfoList.push(msg.body); this.parseFileList(); } catch(e) { }
+                }
+                else
+                {
+                    try { trigger('cmd-' + msg.sequeue, decoder.decode(msg)); } catch(e) { console.trace(e); }
+                    this.currentMessage = -1;
+                    this.sendNext();
+                }
+            }
+            this.device.transferIn(this.endpointIn, 1024)
+            .then(function(r)
+            {
+                self.receive(r);
+            })
+            .catch((e) => {
+                log('RE: ' + e.message);
+            });
+        }
+
+        this.tryReceive = function()
+        {
+            let self = this;
+            this.device.transferIn(this.endpointIn, 1024)
+            .then(function(r)
+            {
+                self.receive(r);
+            })
+            .catch((e) => {
+                log('RE: ' + e.message);
+            });
+        }
+
+        this.decode = function()
+        {
+            if (this.buffer.length < 12) return null;
+            if (this.buffer[0] != 0x12 || this.buffer[1] != 0x34) throw new Error('invalid header');
+            // 2 字节的指令id
+            let idx = 2;
+            let cmdid = this.nextShort(idx);
+            idx += 2;
+            let sequeue = this.nextInt(idx);
+            idx += 4;
+            let len = this.nextInt(idx);
+            let padding = (len >> 24) & 0xff;
+            len = len & 0xffffff;
+            idx += 4;
+            // 数据还没有完全准备好
+            if (this.buffer.length < 12 + len + padding) return null;
+            // 去掉header部分
+            for (let i = 0; i < 12; i++) this.buffer.shift();
+            // 取走body部分
+            let body = [];
+            for (let i = 0; i < len; i++) body.push(this.buffer.shift());
+            // 干掉补上来的数据
+            for (let i = 0; i < padding; i++) this.buffer.shift();
+            return new Message(cmdid, sequeue, body);
+        }
+
+        this.nextShort = function(idx)
+        {
+            let a = this.buffer[idx] & 0xff;
+            let b = this.buffer[idx + 1] & 0xff;
+            return (a << 8) | b;
+        }
+
+        this.nextInt = function(idx)
+        {
+            let val = 0;
+            for (let i = 0; i < 4; i++)
+            {
+                val |= (this.buffer[idx + i] & 0xff) << ((3 - i) * 8);
+            }
+            return val;
+        }
+
+        this.send = function(msg, seconds)
+        {
+            let seq = this.sequeue++;
+            msg.sequence(seq);
+            msg.expireAfter(seconds);
+            this.messages.push(msg);
+            this.sendNext();
+
+            let self = this;
+            let timeout = 0;
+            if (seconds)
+            {
+                timeout = setTimeout(function() { self.timeout(seq); }, seconds * 1000);
+            }
+
+            return new Promise(function(resolve, reject)
+            {
+                register('cmd-' + seq, resolve, reject, timeout);
+            });
+        }
+
+        this.timeout = function(seq)
+        {
+            let action = 'cmd-' + seq;
+            if (action in tasks == false) return;
+            let p = tasks[action];
+            delete tasks[action];
+            p.resolve(null);
+        }
+
+        this.sendNext = function()
+        {
+            if (this.messages.length == 0) return;
+            if (this.currentMessage > 0) return;
+            let msg = null;
+            let now = new Date().getTime();
+            while (true)
+            {
+                if (this.messages.length == 0) return;
+                msg = this.messages.shift();
+                if (msg.expireTime < now)
+                {
+                    console.log('cmd[' + msg.command + '-' + msg.index + '] expired');
+                    continue;
+                }
+                break;
+            }
+            this.currentMessage = msg.index;
+            let data = msg.make();
+            console.error('send', data, msg);
+            this.device.transferOut(this.endpointOut, data).catch((e) => { log('SE: ' + e.message); });
+            if (this.recv == false) this.tryReceive();
+            else this.recv = true;
+        }
+
+        this.recv = false;
+
+        this.parseFileList = function()
+        {
+            let files = [];
+            let data = [];
+            for (let i = 0; i < this.fileInfoList.length; i++)
+            {
+                for (let k = 0; k < this.fileInfoList[i].length; k++) data.push(this.fileInfoList[i][k]);
+            }
+            // 如果前2个是0xffff，那就说明前面有
+            let start = 0;
+            let fc = 0;
+            if ((data[0] & 0xff) == 0xff && (data[1] & 0xff) == 0xff)
+            {
+                fc = ((data[2] & 0xff) << 24) | ((data[3] & 0xff) << 16) | ((data[4] & 0xff) << 8) | (data[5] & 0xff);
+                console.log('file count: ' + fc);
+                start += 6;
+            }
+            for (let i = start; i < data.length; )
+            {
+                let len = 0;
+                let fname = [];
+
+                if (i + 4 >= data.length) break;
+                let ver = data[i++] & 0xff;
+                let nameLen = (data[i++] & 0xff) << 16 | (data[i++] & 0xff) << 8 | (data[i++] & 0xff);
+                for (let k = 0; k < nameLen && i < data.length; k++)
+                {
+                    let c = data[i++] & 0xff;
+                    if (c > 0) fname.push(String.fromCharCode(c));
+                }
+
+                // 4 + nameLen + 4 + 6 + 16
+                if (i + 4 + 6 + 16 > data.length)
+                {
+                    break;
+                }
+
+                // console.log(fname);
+                // 文件大小
+                let flen = (data[i++] & 0xff) << 24 | (data[i++] & 0xff) << 16 | (data[i++] & 0xff) << 8 | (data[i++] & 0xff);
+                // 文件时间，先略过
+                i += 6;
+                // 文件签名
+                let sign = [];
+                for (let k = 0; k < 16; k++, i++)
+                {
+                    let h = (data[i] & 0xff).toString(16);
+                    sign.push(h.length == 1 ? '0' + h : h);
+                }
+                // 20220101000000REC00.wav
+                let ftime = fname.join('');
+                // ftime = ftime.match(/^\d{14}REC\d+\.wav$/gi) ? ftime.replace(/^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})REC.*$/gi, '$1-$2-$3 $4:$5:$6') : null;
+                if (ftime.match(/^\d{14}REC\d+\.wav$/gi))
+                {
+                    ftime = ftime.replace(/^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})REC.*$/gi, '$1-$2-$3 $4:$5:$6');
+                    ftime = new Date(ftime);
+                }
+                else if (ftime.match(/^.*\.hda$/gi))
+                {
+                    ftime = ftime.replace(/^(\d{2})?(\d{2})(\w{3})(\d{2})-(\d{2})(\d{2})(\d{2})-.*\.hda$/gi, '20$2 $3 $4 $5:$6:$7');
+                    ftime = new Date(ftime);
+                }
+                else ftime = null;
+                // md5签名
+                files.push({
+                    name: fname.join(''),
+                    time: ftime,
+                    length: flen,
+                    version: ver,
+                    signature: sign.join('')
+                });
+            }
+            if (files.length == this.fileCount || files.length == fc)
+            {
+                this.currentMessage = -1;
+                this.fileCount = 0;
+                try { if (this.onFileListHandler) this.onFileListHandler(files); } catch(e) { }
+                try { trigger('file-list', files); } catch(e) { }
+                this.onFileListHandler = null;
+                this.sendNext();
+            }
+        }
+
+        this.getDeviceInfo = function(seconds)
+        {
+            return this.send(new Command(QUERY_DEVICE_INFO), seconds);
+        }
+
+        this.test = function(seconds)
+        {
+            // return this.send(new Command(DEVICE_MSG_TEST), seconds);
+        }
+
+        this.getTime = function(seconds)
+        {
+            return this.send(new Command(QUERY_DEVICE_TIME), seconds);
+        }
+
+        this.getCardInfo = function(seconds)
+        {
+            return this.send(new Command(READ_CARD_INFO), seconds);
+        }
+
+        this.massStorage = function(seconds)
+        {
+            return this.send(new Command(0xf00f).body([0x01]), seconds);
+        }
+
+        this.formatCard = function(seconds)
+        {
+            return this.send(new Command(FORMAT_CARD).body([1,2,3,4]), seconds);
+        }
+
+        this.setTime = function(time, seconds)
+        {
+            let str = time.getFullYear() + '-0' + (time.getMonth() + 1) + '-0' + time.getDate() + '-0' + time.getHours() + '-0' + time.getMinutes() + '-0' + time.getSeconds();
+            str = str.replace(/(\d{4})\-0*(\d{2})\-0*(\d{2})\-0*(\d{2})\-0*(\d{2})\-0*(\d{2})/gi, '$1$2$3$4$5$6');
+            return this.send(new Command(SET_DEVICE_TIME).body(decoder.toBCD(str)), seconds);
+        }
+
+        this.getFileList = function()
+        {
+            throw new Error('deprecated');
+            // return this.send(new Command(QUERY_FILE_LIST));
+        }
+
+        this.listFiles = async function(func)
+        {
+            if (this.fileCount > 0) return null;
+            if (this.onFileListHandler) return null;
+
+            this.fileInfoList = 0;
+            this.fileCount = 0;
+            this.onFileListHandler = func;
+            let rst = await this.getFileCount(5);
+            if (rst == null) return null;
+            this.fileCount = rst.count;
+            this.fileInfoList = [];
+            this.send(new Command(QUERY_FILE_LIST));
+            return new Promise((resolve, reject) => {
+                register('file-list', resolve, reject);
+            });
+        }
+
+        this.getFile = function(filename, length, ondata)
+        {
+            if (typeof(length) != 'number') throw new Error('parameter `length` required');
+            if (length <= 0) throw new Error('parameter `length` must greater than zero');
+
+            if (this.fileLength > 0) return null;
+
+            let fname = [];
+            for (let i = 0; i < filename.length; i++) fname.push(filename.charCodeAt(i));
+            this.onFileRecvHandler = ondata;
+            this.fileLength = length;
+            this.fileReadBytes = 0;
+            this.send(new Command(TRANSFER_FILE).body(fname));
+        }
+
+        this.getFileBlock = function(filename, length, ondata)
+        {
+            if (typeof(length) != 'number') throw new Error('parameter `length` required');
+            if (length <= 0) throw new Error('parameter `length` must greater than zero');
+            if (this.fileLength > 0) return null;
+
+            let data = [];
+            data.push((length >> 24) & 0xff);
+            data.push((length >> 16) & 0xff);
+            data.push((length >>  8) & 0xff);
+            data.push((length >>  0) & 0xff);
+            for (let i = 0; i < filename.length; i++) data.push(filename.charCodeAt(i));
+
+            this.onFileRecvHandler = ondata;
+            this.fileLength = length;
+            this.fileReadBytes = 0;
+
+            return this.send(new Command(GET_FILE_BLOCK).body(data));
+        }
+
+        this.getFileCount = function(seconds)
+        {
+            return this.send(new Command(QUERY_FILE_COUNT), seconds);
+        }
+
+        this.deleteFile = function(filename, seconds)
+        {
+            let fname = [];
+            for (let i = 0; i < filename.length; i++) fname.push(filename.charCodeAt(i));
+            return this.send(new Command(DELETE_FILE).body(fname), seconds);
+        }
+
+        this.requestFirmwareUpgrade = function(versionNumber, fileSize, seconds)
+        {
+            let data = [];
+            data[0] = (versionNumber >> 24) & 0xff;
+            data[1] = (versionNumber >> 16) & 0xff;
+            data[2] = (versionNumber >>  8) & 0xff;
+            data[3] = (versionNumber >>  0) & 0xff;
+
+            data[4] = (fileSize >> 24) & 0xff;
+            data[5] = (fileSize >> 16) & 0xff;
+            data[6] = (fileSize >>  8) & 0xff;
+            data[7] = (fileSize >>  0) & 0xff;
+
+            return this.send(new Command(REQUEST_FIRMWARE_UPGRADE).body(data), seconds);
+        }
+
+        this.requestUACUpdate = async function(signature, size, seconds) {
+          let data = [];
+          for (let i = 0; i < signature.length; i+=2)
+          {
+            let b = signature.substring(i, i + 2);
+            data.push(parseInt(b, 16));
+          }
+          data.push((size >> 24) & 0xff);
+          data.push((size >> 16) & 0xff);
+          data.push((size >> 8) & 0xff);
+          data.push((size >> 0) & 0xff);
+          return this.send(new Command(REQUEST_UAC_UPDATE).body(data), seconds);
+        }
+        this.updateUAC = async function(uacFile, seconds) {
+          return this.send(new Command(UAC_UPDATE).body(uacFile), seconds);
+        }
+
+        this.uploadFirmware = function(data)
+        {
+            return this.send(new Command(FIRMWARE_UPLOAD).body(data));
+        }
+
+        this.startBNC = function()
+        {
+            return this.send(new Command(BNC_DEMO_TEST).body([ 0x01 ]));
+        }
+
+        this.stopBNC = function()
+        {
+            return this.send(new Command(BNC_DEMO_TEST).body([ 0x00 ]));
+        }
+
+        this.getSettings = function()
+        {
+            return this.send(new Command(GET_SETTINGS));
+        }
+
+        this.setAutoRecord = function(enable)
+        {
+            return this.send(new Command(SET_SETTINGS).body([0, 0, 0, enable ? 1 : 2, 0, 0, 0, 0, 0, 0, 0, 0]));
+        }
+
+        this.setAutoPlay = function(enable)
+        {
+            return this.send(new Command(SET_SETTINGS).body([0, 0, 0, 0, 0, 0, 0, enable ? 1 : 2, 0, 0, 0, 0]));
+        }
+
+        this.setNotification = function(enable)
+        {
+            return this.send(new Command(SET_SETTINGS).body([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, enable ? 1 : 2]));
+        }
+
+        this.getVersionInfo = function()
+        {
+            return this.send(new Command(TEST_FIRMWARE_VERSION));
+        }
+    }
+
+    // 浏览器发送上去的
+    function Command(id)
+    {
+        this.command = id;
+        this.msgBody = new Array();
+        this.index = 0;
+        this.expireTime = 0;
+        this.timeout = 0;
+        this.body = function(data)
+        {
+            this.msgBody = data;
+            return this;
+        }
+        this.expireAfter = function(seconds)
+        {
+            this.expireTime = new Date().getTime() + (seconds * 1000);
+        }
+        this.sequence = function(seq)
+        {
+            this.index = seq;
+            return this;
+        }
+        this.make = function()
+        {
+            let msg = new Uint8Array(2 + 2 + 4 + 4 + this.msgBody.length);
+            let idx = 0;
+            // msg header
+            msg[idx++] = 0x12;
+            msg[idx++] = 0x34;
+            // msg command id
+            msg[idx++] = (this.command >> 8) & 0xff;
+            msg[idx++] = (this.command >> 0) & 0xff;
+            // msg sequeue id
+            msg[idx++] = (this.index >> 24) & 0xff;
+            msg[idx++] = (this.index >> 16) & 0xff;
+            msg[idx++] = (this.index >>  8) & 0xff;
+            msg[idx++] = (this.index >>  0) & 0xff;
+            // msg body length
+            let len = this.msgBody.length;
+            msg[idx++] = (len >> 24) & 0xff;
+            msg[idx++] = (len >> 16) & 0xff;
+            msg[idx++] = (len >>  8) & 0xff;
+            msg[idx++] = (len >>  0) & 0xff;
+            // msg body
+            for (let i = 0; i < this.msgBody.length; i++) msg[idx++] = this.msgBody[i] & 0xff;
+            return msg;
+        }
+    }
+
+    // 设备回应
+    function Message(id, sequeue, body)
+    {
+        this.id = id;
+        this.sequeue = sequeue;
+        this.body = body;
+    }
+
+    function MessageDecoder()
+    {
+        this.decode = function(msg)
+        {
+            switch (msg.id)
+            {
+                case QUERY_DEVICE_INFO : return parseDeviceInfo(msg);
+                case QUERY_DEVICE_TIME : return parseTime(msg);
+                case SET_DEVICE_TIME : return parseSetTime(msg);
+                case QUERY_FILE_LIST : return parseFileList(msg);
+                case QUERY_FILE_COUNT : return parseFileCount(msg);
+                case DELETE_FILE : return parseDeleteFile(msg);
+                case REQUEST_FIRMWARE_UPGRADE : return parseRequestFirmwareUpgrade(msg);
+                case FIRMWARE_UPLOAD : return parseFirmwareUpload(msg);
+                case BNC_DEMO_TEST : return parseCommon(msg);
+                case GET_SETTINGS : return parseGetSettings(msg);
+                case SET_SETTINGS : return parseCommon(msg);
+                case READ_CARD_INFO : return paresCardInfo(msg);
+                case FORMAT_CARD : return parseCommon(msg);
+                case TEST_FIRMWARE_VERSION : return parseVersionInfo(msg);
+                case REQUEST_UAC_UPDATE : return parseUACUpdate(msg);
+                case UAC_UPDATE : return parseCommon(msg);
+                case 0xf00f : return parseCommon(msg);
+            }
+            // throw new Error('unknown command: ' + msg.id);
+        }
+
+        this.toBCD = function(str)
+        {
+            let x = new Array();
+            for (let i = 0; i < str.length; i += 2)
+            {
+                let h = (str.charCodeAt(i) - 48) & 0xff;
+                let l = (str.charCodeAt(i + 1) - 48) & 0xff;
+                x.push((h << 4) | l);
+            }
+            return x;
+        }
+
+        this.fromBCD = function()
+        {
+            let str = '';
+            for (let i = 0; i < arguments.length; i++)
+            {
+                let v = (arguments[i] & 0xff);
+                str += (v >> 4) & 0x0f;
+                str += v & 0x0f;
+            }
+            return str;
+        }
+
+        function paresCardInfo(msg)
+        {
+            let i = 0;
+            let used = (msg.body[i++] & 0xff) << 24 | (msg.body[i++] & 0xff) << 16 | (msg.body[i++] & 0xff) << 8 | (msg.body[i++] & 0xff);
+            let capacity = (msg.body[i++] & 0xff) << 24 | (msg.body[i++] & 0xff) << 16 | (msg.body[i++] & 0xff) << 8 | (msg.body[i++] & 0xff);
+            let status = (msg.body[i++] & 0xff) << 24 | (msg.body[i++] & 0xff) << 16 | (msg.body[i++] & 0xff) << 8 | (msg.body[i++] & 0xff);
+
+            return { used : used, capacity: capacity, status: status.toString(16) };
+        }
+
+        function parseVersionInfo(msg)
+        {
+            let versions = [];
+            for (let i = 0, s = 0; i < msg.body.length; s++)
+            {
+                versions[s] = [];
+                for (let k = 0; k < 4; k++, i++)
+                {
+                    versions[s].push(msg.body[i] & 0xff);
+                }
+            }
+            const toInt = function(arr) { let v = 0; for (let i = 0; i < arr.length; i++) v |= (arr[i] << (3 - i) * 8); return v; }
+            let igd = toInt(versions[3]).toString(16);
+            let igu = toInt(versions[4]).toString(16);
+
+            // bt/dsp/uac/ig-up/ig-down
+            // 耳机版本号/底座版本号
+            return {
+                bluetooth: versions[0].join('.'),
+                dsp: versions[1].join('.'),
+                uac: versions.length > 2 ? versions[2].join('.') : 'None',
+                igd: versions.length > 3 ? igd : 'None',
+                igu: versions.length > 4 ? igu : 'None',
+                earphone : versions.length > 5 ? versions[5].join('.') : 'None',
+                base : versions.length > 6 ? versions[6].join('.') : 'None'
+            };
+        }
+
+        function parseUACUpdate(msg)
+        {
+          let rst = msg.body[0];
+          let txt = 'success';
+          if (rst == 0x01) txt = 'length-mismatch';
+          else if (rst == 0x02) txt = 'busy';
+          else if (rst == 0x03) txt = 'card-full';
+          else if (rst == 0x04) txt = 'card-error';
+          else txt = String(rst);
+          return { code : rst, result : txt };
+        }
+
+        function parseGetSettings(msg)
+        {
+            let r1 = msg.body[3];
+            let r2 = msg.body[7];
+            let r3 = msg.body[11];
+
+            return { autoRecord : r1 == 1, autoPlay: r2 == 1, notification: r3 == 1 };
+        }
+
+        function parseFirmwareUpload(msg)
+        {
+            let c = msg.body[0];
+            return { result : c == 0x00 ? 'success' : 'failed' };
+        }
+
+        function parseCommon(msg)
+        {
+            let c = msg.body[0];
+            return { result : c == 0x00 ? 'success' : 'failed' };
+        }
+
+        function parseSetTime(msg)
+        {
+            let c = msg.body[0];
+            return { result : c == 0x00 ? 'success' : 'failed' };
+        }
+
+        function parseRequestFirmwareUpgrade(msg)
+        {
+            let rst = '';
+            let c = msg.body[0];
+            if (c == 0x00) rst = 'accepted';
+            if (c == 0x01) rst = 'wrong-version';
+            if (c == 0x02) rst = 'busy';
+            if (c == 0x03) return 'unknown';
+            return { result : rst };
+        }
+
+        function parseFileList(msg)
+        {
+            let files = [];
+            for (let i = 0; i < msg.body.length; )
+            {
+                let len = 0;
+                // 文件名称
+                let fname = [];
+                let nameLen = (msg.body[i++] & 0xff) << 24 | (msg.body[i++] & 0xff) << 16 | (msg.body[i++] & 0xff) << 8 | (msg.body[i++] & 0xff);
+                for (let k = 0; k < nameLen && i < msg.body.length; k++)
+                {
+                    let c = msg.body[i++] & 0xff;
+                    if (c > 0) fname.push(String.fromCharCode(c));
+                }
+                // console.log(fname);
+                // 文件大小
+                let flen = (msg.body[i++] & 0xff) << 24 | (msg.body[i++] & 0xff) << 16 | (msg.body[i++] & 0xff) << 8 | (msg.body[i++] & 0xff);
+                // 文件时间，先略过
+                i += 6;
+                // 文件签名
+                let sign = [];
+                for (let k = 0; k < 16; k++, i++)
+                {
+                    let h = (msg.body[i] & 0xff).toString(16);
+                    sign.push(h.length == 1 ? '0' + h : h);
+                }
+                // 20220101000000REC00.wav
+                let ftime = fname.join('');
+                ftime = ftime.match(/^\d{14}REC\d+\.wav$/gi) ? ftime.replace(/^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})REC.*$/gi, '$1-$2-$3 $4:$5:$6') : null;
+                // md5签名
+                files.push({
+                    name: fname.join(''),
+                    time: ftime,
+                    length: flen,
+                    signature: sign.join('')
+                });
+            }
+            return files;
+        }
+
+        let self = this;
+        function parseTime(msg)
+        {
+            let time = self.fromBCD(msg.body[0] & 0xff, msg.body[1] & 0xff, msg.body[2] & 0xff, msg.body[3] & 0xff,
+                msg.body[4] & 0xff, msg.body[5] & 0xff, msg.body[6] & 0xff
+            );
+            return {
+                time : time == '00000000000000' ? 'unknown' : time.replace(/^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})$/gi, '$1-$2-$3 $4:$5:$6'),
+            };
+        }
+
+        function parseFileCount(msg)
+        {
+            let c = 0;
+            for (let i = 0; i < 4; i++)
+            {
+                let b = msg.body[i] & 0xff;
+                c = c | (b << ((4 - i - 1) * 8));
+            }
+            return { count: c };
+        }
+
+        function parseDeleteFile(msg)
+        {
+            let rst = 'failed';
+            if (msg.body[0] == 0x00) rst = 'success';
+            else if (msg.body[0] == 0x01) rst = 'not-exists';
+            else if (msg.body[0] == 0x02) rst = 'failed';
+            return { result: rst };
+        }
+
+        function parseDeviceInfo(msg)
+        {
+            // 前4字节是版本号
+            // 后16字节是SN号
+            let vc = [], vn = 0;
+            let sn = [];
+            for (let i = 0; i < 4; i++)
+            {
+                let b = msg.body[i] & 0xff;
+                if (i > 0)
+                {
+                    vc.push(String(b));
+                }
+                vn = vn | (b << ((4 - i - 1) * 8));
+            }
+            for (let i = 0; i < 16; i++)
+            {
+                let chr = msg.body[i + 4];
+                if (chr > 0) sn.push(String.fromCharCode(chr));
+            }
+            return {
+                versionCode: vc.join('.'),
+                versionNumber: vn,
+                sn: sn.join('')
+            };
+        }
+    }
+
+    window.onerror = function(a, b, c)
+    {
+        log('E: ' + a + ', ' + b + ', ' + c);
+    }
+
+</script>
+</body>
+</html>
